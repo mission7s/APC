@@ -1,0 +1,12 @@
+- Device status notify
+	- Only main DCS device status
+
+- Event status notify
+	- Only main DCS event status
+
+- InputEvent
+	- SourceHandle >= 0
+	- DCS alive
+
+- DCSdll
+	- Alive check in/out port

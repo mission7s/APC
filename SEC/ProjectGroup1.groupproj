@@ -1,0 +1,60 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{8E61CEB2-45EF-4236-9741-C0A15094F113}</ProjectGuid>
+    </PropertyGroup>
+    <ItemGroup>
+        <Projects Include="SEC.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="..\..\xe_lib\WiseMedia Tools\dcWiseMediaPack.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="..\..\xe_lib\WiseMedia Tools\WiseMideaPack.dproj">
+            <Dependencies/>
+        </Projects>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Default.Personality.12</Borland.Personality>
+        <Borland.ProjectType/>
+        <BorlandProject>
+            <Default.Personality/>
+        </BorlandProject>
+    </ProjectExtensions>
+    <Target Name="SEC">
+        <MSBuild Projects="SEC.dproj"/>
+    </Target>
+    <Target Name="SEC:Clean">
+        <MSBuild Projects="SEC.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="SEC:Make">
+        <MSBuild Projects="SEC.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="dcWiseMediaPack">
+        <MSBuild Projects="..\..\xe_lib\WiseMedia Tools\dcWiseMediaPack.dproj"/>
+    </Target>
+    <Target Name="dcWiseMediaPack:Clean">
+        <MSBuild Projects="..\..\xe_lib\WiseMedia Tools\dcWiseMediaPack.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="dcWiseMediaPack:Make">
+        <MSBuild Projects="..\..\xe_lib\WiseMedia Tools\dcWiseMediaPack.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="WiseMideaPack">
+        <MSBuild Projects="..\..\xe_lib\WiseMedia Tools\WiseMideaPack.dproj"/>
+    </Target>
+    <Target Name="WiseMideaPack:Clean">
+        <MSBuild Projects="..\..\xe_lib\WiseMedia Tools\WiseMideaPack.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="WiseMideaPack:Make">
+        <MSBuild Projects="..\..\xe_lib\WiseMedia Tools\WiseMideaPack.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="Build">
+        <CallTarget Targets="SEC;dcWiseMediaPack;WiseMideaPack"/>
+    </Target>
+    <Target Name="Clean">
+        <CallTarget Targets="SEC:Clean;dcWiseMediaPack:Clean;WiseMideaPack:Clean"/>
+    </Target>
+    <Target Name="Make">
+        <CallTarget Targets="SEC:Make;dcWiseMediaPack:Make;WiseMideaPack:Make"/>
+    </Target>
+    <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+</Project>

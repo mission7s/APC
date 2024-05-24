@@ -1,0 +1,442 @@
+unit DLLConsts;
+
+interface
+
+uses Classes, Windows, SysUtils, Dialogs, IdBaseComponent, IdComponent, IdUDPBase, IdUDPServer, IdUDPClient,
+     IdSocketHandle, DCSMgr, WMSerial, APCCommons, APCErrorCode;
+
+type
+  // Callback function of status
+  TDeviceStatusCallbackProc = procedure (AEventID: TEventID; ADeviceHandle: TDeviceHandle; AStatus: TStatus); stdcall;
+  PDeviceStatusCallbackProc = ^TDeviceStatusCallbackProc;
+
+  // Callback function of event status
+  TEventStatusCallbackProc = procedure (AEventID: TEventID; AEventStatus: TEventStatus); stdcall;
+  PEventStatusCallbackProc = ^TEventStatusCallbackProc;
+
+var
+  DeviceStatusCallbackProc: TDeviceStatusCallbackProc;
+  EventStatusCallbackProc: TEventStatusCallbackProc;
+
+function DCSInitialize(ACallbackPort, AInPort, AOutPort: Integer; ABroadcast: Boolean = False): Integer; stdcall;
+function DCSFinalize: Integer; stdcall;
+
+function DCSDeviceStatusCallback(CallbackFunc: Pointer): Integer; stdcall;
+function DCSEventStatusCallback(CallbackFunc: Pointer): Integer; stdcall;
+
+// 0X00 System Control
+function DCSOpen(AHost: PChar; ADeviceName: PChar; var AHandle: TDeviceHandle): Integer; stdcall;
+function DCSClose(AHandle: TDeviceHandle): Integer; stdcall;
+
+// 0X10 Immediate Control
+function DCSStop(AHandle: TDeviceHandle): Integer; stdcall;
+function DCSPlay(AHandle: TDeviceHandle): Integer; stdcall;
+function DCSPause(AHandle: TDeviceHandle): Integer; stdcall;
+function DCSContinue(AHandle: TDeviceHandle): Integer; stdcall;
+function DCSFastFoward(AHandle: TDeviceHandle): Integer; stdcall;
+function DCSFastRewind(AHandle: TDeviceHandle): Integer; stdcall;
+function DCSJog(AHandle: TDeviceHandle; AFrameOrSpeed: Double): Integer; stdcall;
+function DCSShuttle(AHandle: TDeviceHandle; ASpeed: Double): Integer; stdcall;
+function DCSStandBy(AHandle: TDeviceHandle; AOn: Boolean): Integer; stdcall;
+function DCSEject(AHandle: TDeviceHandle): Integer; stdcall;
+function DCSPreroll(AHandle: TDeviceHandle): Integer; stdcall;
+function DCSRecord(AHandle: TDeviceHandle): Integer; stdcall;
+function DCSAutoEdit(AHandle: TDeviceHandle): Integer; stdcall; // VCR only
+
+// 0X20 Preset/Select Commands
+function DCSSetPortMode(AHandle: TDeviceHandle; APortMode: TPortMode): Integer; stdcall; // Video server only
+function DCSSetAutoStatus(AHandle: TDeviceHandle; AAutoStatus: Boolean = True): Integer; stdcall;
+function DCSPlayCue(AHandle: TDeviceHandle; AID: String; ACueTC, ADuration: TTimecode): Integer; stdcall;
+function DCSRecordCue(AHandle: TDeviceHandle; AID: String; ADuration: TTimecode): Integer; stdcall;
+function DCSIDRename(AHandle: TDeviceHandle; ASourceID, ATargetID: String): Integer; stdcall;
+function DCSIDDelete(AHandle: TDeviceHandle; AID: String): Integer; stdcall;
+function DCSInEntry(AHandle: TDeviceHandle): Integer; stdcall; // VCR only
+function DCSOutEntry(AHandle: TDeviceHandle): Integer; stdcall; // VCR only
+function DCSAInEntry(AHandle: TDeviceHandle): Integer; stdcall; // VCR only
+function DCSAOutEntry(AHandle: TDeviceHandle): Integer; stdcall; // VCR only
+function DCSInReset(AHandle: TDeviceHandle): Integer; stdcall; // VCR only
+function DCSOutReset(AHandle: TDeviceHandle): Integer; stdcall; // VCR only
+function DCSAInReset(AHandle: TDeviceHandle): Integer; stdcall; // VCR only
+function DCSAOutReset(AHandle: TDeviceHandle): Integer; stdcall; // VCR only
+function DCSEditPreset(AHandle: TDeviceHandle; AData1, AData2: Byte): Integer; stdcall; // VCR only
+function DCSSetRoute(AHandle: TDeviceHandle; AOutput, AInput, ALevel: Integer): Integer; stdcall; // Router only
+
+// 0X30 Sense Queries
+function DCSGetStatus(AHandle: TDeviceHandle; var AStatus: TStatus): Integer; stdcall;
+function DCSGetStorageTimeRemaining(AHandle: TDeviceHandle; var ATotalTC, AAvailableTC: TTimecode; AExtended: Boolean = False): Integer; stdcall;
+function DCSGetTC(AHandle: TDeviceHandle; var ACurTC: TTimecode): Integer; stdcall;
+function DCSGetRemainTC(AHandle: TDeviceHandle; var ARemainTC: TTimecode): Integer; stdcall;
+function DCSGetList(AHandle: TDeviceHandle; var AIDList: TIDList; var ARemainIDCount: Integer): Integer; stdcall;
+function DCSGetNext(AHandle: TDeviceHandle; var AIDList: TIDList; var ARemainIDCount: Integer): Integer; stdcall;
+function DCSGetExist(AHandle: TDeviceHandle; AID: String; var AExist: Boolean): Integer; stdcall;
+function DCSGetSize(AHandle: TDeviceHandle; AID: String; var ADuration: TTimecode): Integer; stdcall;
+function DCSGetRoute(AHandle: TDeviceHandle; AOutput: Integer; var AInput: Integer; ALevel: Integer): Integer; stdcall; // Router only
+
+// 0X40 Event Control
+function DCSInputEvent(AHandle: TDeviceHandle; var AEvent: TEvent): Integer; stdcall;
+function DCSDeleteEvent(AHandle: TDeviceHandle; AEventID: TEventID): Integer; stdcall;
+function DCSClearEvent(AHandle: TDeviceHandle): Integer; stdcall;
+function DCSTakeEvent(AHandle: TDeviceHandle; AEventID: TEventID; ADelayTime: TTimecode): Integer; stdcall;
+function DCSOnAirCatchEvent(AHandle: TDeviceHandle): Integer; stdcall;
+function DCSGetOnAirEventID(AHandle: TDeviceHandle; var AIsOnAir: Boolean; var ACurrEventID, ANextEventID: TEventID): Integer; stdcall;
+function DCSGetEventStatus(AHandle: TDeviceHandle; AEventID: TEventID; var AEventStatus: TEventStatus): Integer; stdcall;
+function DCSGetEventStartTime(AHandle: TDeviceHandle; AEventID: TEventID; var AStartTime: TEventTime): Integer; stdcall;
+
+exports // exports 절이 추가된다.
+  DCSInitialize name 'DCSInitialize',
+  DCSFinalize name 'DCSFinalize',
+
+  DCSDeviceStatusCallback name 'DCSDeviceStatusCallback',
+  DCSEventStatusCallback name 'DCSEventStatusCallback',
+
+  DCSOpen name 'DCSOpen',
+  DCSClose name 'DCSClose',
+
+  DCSStop name 'DCSStop',
+  DCSPlay name 'DCSPlay',
+  DCSPause name 'DCSPause',
+  DCSContinue name 'DCSContinue',
+  DCSFastFoward name 'DCSFastFoward',
+  DCSFastRewind name 'DCSFastRewind',
+  DCSJog name 'DCSJog',
+  DCSShuttle name 'DCSShuttle',
+  DCSStandBy name 'DCSStandBy',
+  DCSEject name 'DCSEject',
+  DCSPreroll name 'DCSPreroll',
+  DCSRecord name 'DCSRecord',
+  DCSAutoEdit name 'DCSAutoEdit',
+
+  DCSSetPortMode name 'DCSSetPortMode',
+  DCSSetAutoStatus name 'DCSSetAutoStatus',
+  DCSPlayCue name 'DCSPlayCue',
+  DCSRecordCue name 'DCSRecordCue',
+  DCSIDRename name 'DCSIDRename',
+  DCSIDDelete name 'DCSIDDelete',
+  DCSInEntry name 'DCSInEntry',
+  DCSOutEntry name 'DCSOutEntry',
+  DCSAInEntry name 'DCSAInEntry',
+  DCSAOutEntry name 'DCSAOutEntry',
+  DCSInReset name 'DCSInReset',
+  DCSOutReset name 'DCSOutReset',
+  DCSAInReset name 'DCSAInReset',
+  DCSAOutReset name 'DCSAOutReset',
+  DCSEditPreset name 'DCSEditPreset',
+  DCSSetRoute name 'DCSSetRoute',
+
+  DCSGetStatus name 'DCSGetStatus',
+  DCSGetStorageTimeRemaining name 'DCSGetStorageTimeRemaining',
+  DCSGetTC name 'DCSGetTC',
+  DCSGetRemainTC name 'DCSGetRemainTC',
+  DCSGetList name 'DCSGetList',
+  DCSGetNext name 'DCSGetNext',
+  DCSGetExist name 'DCSGetExist',
+  DCSGetSize name 'DCSGetSize',
+  DCSGetRoute name 'DCSGetRoute',
+
+  DCSInputEvent name 'DCSInputEvent',
+  DCSDeleteEvent name 'DCSDeleteEvent',
+  DCSClearEvent name 'DCSClearEvent',
+  DCSTakeEvent name 'DCSTakeEvent',
+  DCSOnAirCatchEvent name 'DCSOnAirCatchEvent',
+  DCSGetOnAirEventID name 'DCSGetOnAirEventID',
+  DCSGetEventStatus name 'DCSGetEventStatus',
+  DCSGetEventStartTime name 'DCSGetEventStartTime';
+
+implementation
+
+function DCSInitialize(ACallbackPort, AInPort, AOutPort: Integer; ABroadcast: Boolean = False): Integer;
+begin
+  with VDCSMgr do
+  begin
+    UDPCallBack.DefaultPort := ACallbackPort;
+    UDPIn.DefaultPort       := AInPort;
+    UDPOut.Port             := AOutPort;
+
+    UDPCallBack.ThreadedEvent := True;
+    UDPIn.ThreadedEvent       := True;
+
+    UDPCallBack.Active  := True;
+    UDPIn.Active        := True;
+    UDPOut.Active       := True;
+  end;
+
+  Result := D_OK;
+end;
+
+function DCSFinalize: Integer;
+begin
+  with VDCSMgr do
+  begin
+    UDPCallBack.Active  := False;
+    UDPIn.Active        := False;
+    UDPOut.Active       := False;
+  end;
+
+  Result := D_OK;
+end;
+
+function DCSDeviceStatusCallback(CallbackFunc: Pointer): Integer;
+begin
+  Result := D_FALSE;
+
+  if CallbackFunc = nil then exit;
+  @DeviceStatusCallbackProc := CallbackFunc;
+  Result := D_OK;
+end;
+
+function DCSEventStatusCallback(CallbackFunc: Pointer): Integer; stdcall;
+begin
+  Result := D_FALSE;
+
+  if CallbackFunc = nil then exit;
+  @EventStatusCallbackProc := CallbackFunc;
+  Result := D_OK;
+end;
+
+// 0X00 System Control
+function DCSOpen(AHost: PChar; ADeviceName: PChar; var AHandle: TDeviceHandle): Integer;
+begin
+  Result := VDCSMgr.Open(AHost, ADeviceName, AHandle);
+end;
+
+function DCSClose(AHandle: TDeviceHandle): Integer;
+begin
+  Result := VDCSMgr.Close(AHandle);
+end;
+
+// Video server only
+function DCSSetPortMode(AHandle: TDeviceHandle; APortMode: TPortMode): Integer;
+begin
+  Result := VDCSMgr.SetPortMode(AHandle, APortMode);
+end;
+
+function DCSSetAutoStatus(AHandle: TDeviceHandle; AAutoStatus: Boolean = True): Integer; stdcall;
+begin
+  Result := VDCSMgr.SetAutoStatus(AHandle, AAutoStatus);
+end;
+
+// 0X10 Immediate Control
+function DCSStop(AHandle: TDeviceHandle): Integer;
+begin
+  Result := VDCSMgr.Stop(AHandle);
+end;
+
+function DCSPlay(AHandle: TDeviceHandle): Integer;
+begin
+  Result := VDCSMgr.Play(AHandle);
+end;
+
+function DCSPause(AHandle: TDeviceHandle): Integer;
+begin
+  Result := VDCSMgr.Pause(AHandle);
+end;
+
+function DCSContinue(AHandle: TDeviceHandle): Integer; stdcall;
+begin
+  Result := VDCSMgr.Continue(AHandle);
+end;
+
+function DCSFastFoward(AHandle: TDeviceHandle): Integer;
+begin
+  Result := VDCSMgr.FastFoward(AHandle);
+end;
+
+function DCSFastRewind(AHandle: TDeviceHandle): Integer;
+begin
+  Result := VDCSMgr.FastRewind(AHandle);
+end;
+
+function DCSJog(AHandle: TDeviceHandle; AFrameOrSpeed: Double): Integer;
+begin
+  Result := VDCSMgr.Jog(AHandle, AFrameOrSpeed);
+end;
+
+function DCSShuttle(AHandle: TDeviceHandle; ASpeed: Double): Integer;
+begin
+  Result := VDCSMgr.Shuttle(AHandle, ASpeed);
+end;
+
+function DCSStandBy(AHandle: TDeviceHandle; AOn: Boolean): Integer;
+begin
+  Result := VDCSMgr.StandBy(AHandle, AOn);
+end;
+
+function DCSEject(AHandle: TDeviceHandle): Integer;
+begin
+  Result := VDCSMgr.Eject(AHandle);
+end;
+
+function DCSPreroll(AHandle: TDeviceHandle): Integer; stdcall;
+begin
+  Result := VDCSMgr.Preroll(AHandle);
+end;
+
+function DCSRecord(AHandle: TDeviceHandle): Integer;
+begin
+  Result := VDCSMgr.Rec(AHandle);
+end;
+
+function DCSAutoEdit(AHandle: TDeviceHandle): Integer; stdcall; // VCR only
+begin
+  Result := VDCSMgr.AutoEdit(AHandle);
+end;
+
+// 0X20 Preset/Select Commands
+function DCSPlayCue(AHandle: TDeviceHandle; AID: String; ACueTC, ADuration: TTimecode): Integer;
+begin
+  Result := VDCSMgr.PlayCue(AHandle, AID, ACueTC, ADuration);
+end;
+
+function DCSRecordCue(AHandle: TDeviceHandle; AID: String; ADuration: TTimecode): Integer;
+begin
+  Result := VDCSMgr.RecordCue(AHandle, AID, ADuration);
+end;
+
+function DCSIDRename(AHandle: TDeviceHandle; ASourceID, ATargetID: String): Integer;
+begin
+  Result := VDCSMgr.IDRename(AHandle, ASourceID, ATargetID);
+end;
+
+function DCSIDDelete(AHandle: TDeviceHandle; AID: String): Integer;
+begin
+  Result := VDCSMgr.IDDelete(AHandle, AID);
+end;
+
+function DCSInEntry(AHandle: TDeviceHandle): Integer; // VCR only
+begin
+  Result := VDCSMgr.InEntry(AHandle);
+end;
+
+function DCSOutEntry(AHandle: TDeviceHandle): Integer; // VCR only
+begin
+  Result := VDCSMgr.OutEntry(AHandle);
+end;
+
+function DCSAInEntry(AHandle: TDeviceHandle): Integer; // VCR only
+begin
+  Result := VDCSMgr.AInEntry(AHandle);
+end;
+
+function DCSAOutEntry(AHandle: TDeviceHandle): Integer; // VCR only
+begin
+  Result := VDCSMgr.AOutEntry(AHandle);
+end;
+
+function DCSInReset(AHandle: TDeviceHandle): Integer;
+begin
+  Result := VDCSMgr.InReset(AHandle);
+end;
+
+function DCSOutReset(AHandle: TDeviceHandle): Integer;
+begin
+  Result := VDCSMgr.OutReset(AHandle);
+end;
+
+function DCSAInReset(AHandle: TDeviceHandle): Integer;
+begin
+  Result := VDCSMgr.AInReset(AHandle);
+end;
+
+function DCSAOutReset(AHandle: TDeviceHandle): Integer;
+begin
+  Result := VDCSMgr.AOutReset(AHandle);
+end;
+
+function DCSEditPreset(AHandle: TDeviceHandle; AData1, AData2: Byte): Integer;
+begin
+  Result := VDCSMgr.EditPreset(AHandle, AData1, AData2);
+end;
+
+function DCSSetRoute(AHandle: TDeviceHandle; AOutput, AInput, ALevel: Integer): Integer; // Router only
+begin
+  Result := VDCSMgr.SetRoute(AHandle, AOutput, AInput, ALevel);
+end;
+
+// 0X30 Sense Queries
+function DCSGetStatus(AHandle: TDeviceHandle; var AStatus: TStatus): Integer;
+begin
+  Result := VDCSMgr.GetStatus(AHandle, AStatus);
+end;
+
+function DCSGetStorageTimeRemaining(AHandle: TDeviceHandle; var ATotalTC, AAvailableTC: TTimecode; AExtended: Boolean = False): Integer;
+begin
+  Result := VDCSMgr.GetStorageTimeRemaining(AHandle, ATotalTC, AAvailableTC, AExtended);
+end;
+
+function DCSGetTC(AHandle: TDeviceHandle; var ACurTC: TTimecode): Integer;
+begin
+  Result := VDCSMgr.GetTC(AHandle, ACurTC);
+end;
+
+function DCSGetRemainTC(AHandle: TDeviceHandle; var ARemainTC: TTimecode): Integer;
+begin
+  Result := VDCSMgr.GetRemainTC(AHandle, ARemainTC);
+end;
+
+function DCSGetList(AHandle: TDeviceHandle; var AIDList: TIDList; var ARemainIDCount: Integer): Integer;
+begin
+  Result := VDCSMgr.GetList(AHandle, AIDList, ARemainIDCount);
+end;
+
+function DCSGetNext(AHandle: TDeviceHandle; var AIDList: TIDList; var ARemainIDCount: Integer): Integer;
+begin
+  Result := VDCSMgr.GetNext(AHandle, AIDList, ARemainIDCount);
+end;
+
+function DCSGetExist(AHandle: TDeviceHandle; AID: String; var AExist: Boolean): Integer;
+begin
+  Result := VDCSMgr.GetExist(AHandle, AID, AExist);
+end;
+
+function DCSGetSize(AHandle: TDeviceHandle; AID: String; var ADuration: TTimecode): Integer;
+begin
+  Result := VDCSMgr.GetSize(AHandle, AID, ADuration);
+end;
+
+function DCSGetRoute(AHandle: TDeviceHandle; AOutput: Integer; var AInput: Integer; ALevel: Integer): Integer;
+begin
+  Result := VDCSMgr.GetRoute(AHandle, AOutput, AInput, ALevel);
+end;
+
+// 0X40 Event Control
+function DCSInputEvent(AHandle: TDeviceHandle; var AEvent: TEvent): Integer;
+begin
+  Result := VDCSMgr.InputEvent(AHandle, AEvent);
+end;
+
+function DCSDeleteEvent(AHandle: TDeviceHandle; AEventID: TEventID): Integer;
+begin
+  Result := VDCSMgr.DeleteEvent(AHandle, AEventID);
+end;
+
+function DCSClearEvent(AHandle: TDeviceHandle): Integer;
+begin
+  Result := VDCSMgr.ClearEvent(AHandle);
+end;
+
+function DCSTakeEvent(AHandle: TDeviceHandle; AEventID: TEventID; ADelayTime: TTimecode): Integer;
+begin
+  Result := VDCSMgr.TakeEvent(AHandle, AEventID, ADelayTime);
+end;
+
+function DCSOnAirCatchEvent(AHandle: TDeviceHandle): Integer; stdcall;
+begin
+  Result := VDCSMgr.OnAirCatchEvent(AHandle);
+end;
+
+function DCSGetOnAirEventID(AHandle: TDeviceHandle; var AIsOnAir: Boolean; var ACurrEventID, ANextEventID: TEventID): Integer; stdcall;
+begin
+  Result := VDCSMgr.GetOnAirEventID(AHandle, AIsOnAir, ACurrEventID, ANextEventID);
+end;
+
+function DCSGetEventStatus(AHandle: TDeviceHandle; AEventID: TEventID; var AEventStatus: TEventStatus): Integer; stdcall;
+begin
+  Result := VDCSMgr.GetEventStatus(AHandle, AEventID, AEventStatus);
+end;
+
+function DCSGetEventStartTime(AHandle: TDeviceHandle; AEventID: TEventID; var AStartTime: TEventTime): Integer; stdcall;
+begin
+  Result := VDCSMgr.GetEventStartTime(AHandle, AEventID, AStartTime);
+end;
+
+end.

@@ -1,0 +1,41 @@
+- DCS Log
+	- Main/Sub Is Alive Check
+	- Is Main Check
+	- Set Main
+	- Get Event Count
+	- Get Event
+
+	- Start Onair
+	- Freeze Onair
+	- Assign Next
+	- Take Next
+	- Change Duration
+
+	- Command Error Log
+
+	- Device Open
+	- Device Close
+
+
+- Device Log
+	- Input Event
+	- Delete Event
+	- Clear Event
+	- Take Event
+	- Hold Event
+	- Change Duration Event
+
+	- Device Init
+	- Device Reset
+
+	- Device Command
+	- Device Clear
+	- Device Changed
+	- Device Start(Play)
+	- Device Stop
+	- Device Cue
+	- Device Set Next Event
+	- Device Set Curr Event
+
+	- Device Error Log
+	- Device Event Status Log

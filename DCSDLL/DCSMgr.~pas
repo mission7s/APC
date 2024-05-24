@@ -1,0 +1,1387 @@
+unit DCSMgr;
+
+interface
+
+uses Classes, Windows, SysUtils, Dialogs, IdBaseComponent, IdComponent, IdUDPBase, IdUDPServer, IdUDPClient,
+     IdSocketHandle, IdGlobal, SyncObjs, WMSerial, APCCommons, APCErrorCode;
+
+type
+  TDeviceInfo = record
+    Handle: TDeviceHandle;
+    Name: array[0..DEVICENAME_LEN] of Char;
+    Host: array[0..MAXCHAR] of Char;
+    Port: Integer;
+  end;
+  PDeviceInfo = ^TDeviceInfo;
+
+  TDCSEventCallbackThread = class;
+
+  TDCSMgr = class(TComponent)
+  private
+    FUDPCallback: TIdUDPServer;
+    FUDPIn: TIdUDPServer;
+    FUDPOut: TIdUDPClient;
+    FDeviceList: TList;
+    FSyncMsgEvent: THandle;
+    FReceivedBuffer: String;
+    FReceivedData: String;
+    FLastResult: Integer;
+
+    FCallbackBuffer: String;
+    FCallbackData: String;
+
+    FCriticalSection: TCriticalSection;
+
+    FEventCallbackThread: TDCSEventCallbackThread;
+
+    function GetDeviceByHandle(AHandle: TDeviceHandle): PDeviceInfo;
+    function GetDeviceByName(AName: String): PDeviceInfo;
+    function GetValidDeviceHandle(AHandle: TDeviceHandle; var DeviceInfo: PDeviceInfo): Integer;
+
+    function SendCommand(AHost: String; APort: Integer; ACmd1, ACmd2: Byte; ADataBuf: String; ADataSize: Integer): Integer;
+
+    procedure UDPCallbackRead(AThread: TIdUDPListenerThread; AData: TIdBytes; ABinding: TIdSocketHandle);
+    procedure UDPInRead(AThread: TIdUDPListenerThread; AData: TIdBytes; ABinding: TIdSocketHandle);
+  public
+    constructor Create(AOwner: TComponent); override;
+    destructor Destroy; override;
+
+    function CheckSum(AValue: String): Boolean;
+    function TransmitCommand(AHost: String; APort: Integer; ACmd1, ACmd2: Byte; ADataBuf: String; ADataSize: Integer): Integer;
+    function TransmitDevice(ACmd1, ACmd2: Byte; AHandle: TDeviceHandle; ADataBuf: String; ADataSize: Integer): Integer;
+
+    // 0X00 System Control
+    function Open(AHost: PChar; ADeviceName: PChar; var AHandle: TDeviceHandle): Integer;                 // 0X00.00
+    function Close(AHandle: TDeviceHandle): Integer;                                                      // 0X00.01
+
+    // 0X10 Immediate Control
+    function Stop(AHandle: TDeviceHandle): Integer;                                                       // 0X10.00
+    function Play(AHandle: TDeviceHandle): Integer;                                                       // 0X10.01
+    function Pause(AHandle: TDeviceHandle): Integer;                                                      // 0X10.02
+    function Continue(AHandle: TDeviceHandle): Integer;                                                   // 0X10.03
+    function FastFoward(AHandle: TDeviceHandle): Integer;                                                 // 0X10.04
+    function FastRewind(AHandle: TDeviceHandle): Integer;                                                 // 0X10.05
+    function Jog(AHandle: TDeviceHandle; AFrameOrSpeed: Double): Integer;                                 // 0X10.06
+    function Shuttle(AHandle: TDeviceHandle; ASpeed: Double): Integer;                                    // 0X10.07
+    function StandBy(AHandle: TDeviceHandle; AOn: Boolean): Integer;                                      // 0X10.08
+    function Eject(AHandle: TDeviceHandle): Integer;                                                      // 0X10.09
+    function Preroll(AHandle: TDeviceHandle): Integer;                                                    // 0X10.10 VCR only
+    function Rec(AHandle: TDeviceHandle): Integer;                                                        // 0X10.20
+    function AutoEdit(AHandle: TDeviceHandle): Integer;                                                   // 0X10.21 VCR only
+
+    // 0X20 Preset/Select Commands
+    function SetPortMode(AHandle: TDeviceHandle; APortMode: TPortMode): Integer;                          // 0X20.00 Video server only
+    function SetAutoStatus(AHandle: TDeviceHandle; AAutoStatus: Boolean = True): Integer;                 // 0X20.01
+    function PlayCue(AHandle: TDeviceHandle; AID: String; ACueTC, ADuration: TTimecode): Integer;         // 0X20.10
+    function RecordCue(AHandle: TDeviceHandle; AID: String; ADuration: TTimecode): Integer;               // 0X20.20
+    function IDRename(AHandle: TDeviceHandle; ASourceID, ATargetID: String): Integer;                     // 0X20.30
+    function IDDelete(AHandle: TDeviceHandle; AID: String): Integer;                                      // 0X20.31
+    function InEntry(AHandle: TDeviceHandle): Integer;                                                    // 0X20.40 VCR only
+    function OutEntry(AHandle: TDeviceHandle): Integer;                                                   // 0X20.41 VCR only
+    function AInEntry(AHandle: TDeviceHandle): Integer;                                                   // 0X20.42 VCR only
+    function AOutEntry(AHandle: TDeviceHandle): Integer;                                                  // 0X20.43 VCR only
+    function InReset(AHandle: TDeviceHandle): Integer;                                                    // 0X20.44 VCR only
+    function OutReset(AHandle: TDeviceHandle): Integer;                                                   // 0X20.45 VCR only
+    function AInReset(AHandle: TDeviceHandle): Integer;                                                   // 0X20.46 VCR only
+    function AOutReset(AHandle: TDeviceHandle): Integer;                                                  // 0X20.47 VCR only
+    function EditPreset(AHandle: TDeviceHandle; AData1, AData2: Byte): Integer;                           // 0X20.48 VCR only
+    function SetRoute(AHandle: TDeviceHandle; AOutput, AInput, ALevel: Integer): Integer;                 // 0X20.50 Router only
+
+    // 0X30 Sense Queries
+    function GetStatus(AHandle: TDeviceHandle; var AStatus: TStatus): Integer;                            // 0X30.00
+    function GetStorageTimeRemaining(AHandle: TDeviceHandle; var ATotal, AAvailable: TTimecode; Extended: Boolean = False): Integer; // 0X30.01
+    function GetTC(AHandle: TDeviceHandle; var ACurTC: TTimecode): Integer;                               // 0X30.10
+    function GetRemainTC(AHandle: TDeviceHandle; var ARemainTC: TTimecode): Integer;                      // 0X30.11
+    function GetList(AHandle: TDeviceHandle; var AIDList: TIDList; var ARemainIDCount: Integer): Integer; // 0X30.20
+    function GetNext(AHandle: TDeviceHandle; var AIDList: TIDList; var ARemainIDCount: Integer): Integer; // 0X30.21
+    function GetExist(AHandle: TDeviceHandle; AID: String; var AExist: Boolean): Integer;                 // 0X30.22
+    function GetSize(AHandle: TDeviceHandle; AID: String; var ADuration: TTimecode): Integer;             // 0X30.23
+    function GetRoute(AHandle: TDeviceHandle; AOutput: Integer; var AInput: Integer; ALevel: Integer): Integer; // 0X30.50 Router only
+
+    // 0X40 Event Control
+    function InputEvent(AHandle: TDeviceHandle; var AEvent: TEvent): Integer;                             // 0X40.00
+    function DeleteEvent(AHandle: TDeviceHandle; AEventID: TEventID): Integer;                            // 0X40.01
+    function ClearEvent(AHandle: TDeviceHandle): Integer;                                                 // 0X40.02
+    function TakeEvent(AHandle: TDeviceHandle; AEventID: TEventID; ADelayTime: TTimecode): Integer;       // 0X40.10
+    function OnAirCatchEvent(AHandle: TDeviceHandle): Integer;                                            // 0X40.11
+    function GetOnAirEventID(AHandle: TDeviceHandle; var AIsOnAir: Boolean; var ACurrEventID, ANextEventID: TEventID): Integer;       // 0X40.20
+    function GetEventStatus(AHandle: TDeviceHandle; AEventID: TEventID; var AEventStatus: TEventStatus): Integer;       // 0X40.21
+    function GetEventStartTime(AHandle: TDeviceHandle; AEventID: TEventID; var AStartTime: TEventTime): Integer; // 0X40.22
+
+    property UDPCallback: TIdUDPServer read FUDPCallback write FUDPCallback;
+    property UDPIn: TIdUDPServer read FUDPIn write FUDPIn;
+    property UDPOut: TIdUDPClient read FUDPOut write FUDPOut;
+  end;
+
+  TDCSEventCallbackThread = class(TThread)
+  private
+    FDCSMgr: TDCSMgr;
+    FExecuteEvent: THandle;
+    FEventID: TEventID;
+    FEventStatus: TEventStatus;
+
+    procedure DoControl;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(ADCSMgr: TDCSMgr); virtual;
+    destructor Destroy; override;
+
+    procedure SetEventStatus(AEventID: TEventID; AEventStatus: TEventStatus);
+  end;
+
+var
+  VDCSMgr: TDCSMgr;
+
+implementation
+
+uses DLLConsts;
+
+constructor TDCSMgr.Create(AOwner: TComponent);
+begin
+  inherited Create(AOwner);
+
+  FCriticalSection := TCriticalSection.Create;
+
+  FUDPCallback := TIdUDPServer.Create(Self);
+  FUDPCallback.ThreadedEvent := True;
+  FUDPCallback.OnUDPRead := UDPCallbackRead;
+  FUDPCallback.ReceiveTimeout := 10000;
+
+  FUDPIn := TIdUDPServer.Create(Self);
+  FUDPIn.ThreadedEvent := True;
+  FUDPIn.OnUDPRead := UDPInRead;
+  FUDPIn.ReceiveTimeout := 100000;
+
+  FUDPOut := TIdUDPClient.Create(Self);
+  FUDPOut.ReceiveTimeout := 100000;
+
+  FDeviceList := TList.Create;
+
+  FSyncMsgEvent := CreateEvent(nil, True, False, nil);
+
+  FEventCallbackThread := TDCSEventCallbackThread.Create(Self);
+  FEventCallbackThread.Resume;
+end;
+
+destructor TDCSMgr.Destroy;
+var
+  I: Integer;
+begin
+  if Assigned(FEventCallbackThread) then
+  begin
+    FEventCallbackThread.Terminate;
+    FreeAndNil(FEventCallbackThread);
+  end;
+
+  CloseHandle(FSyncMsgEvent);
+
+  if FUDPCallback.Active then FUDPCallback.Active := False;
+  FreeAndNil(FUDPCallback);
+
+  if FUDPIn.Active then FUDPIn.Active := False;
+  FreeAndNil(FUDPIn);
+
+  if FUDPOut.Active then FUDPOut.Active := False;
+  FreeAndNil(FUDPOut);
+
+  for I := 0 to FDeviceList.Count - 1 do Dispose(FDeviceList[I]);
+  FDeviceList.Clear;
+  FreeAndNil(FDeviceList);
+
+  FreeAndNil(FCriticalSection);
+
+  inherited Destroy;
+end;
+
+function TDCSMgr.GetDeviceByHandle(AHandle: TDeviceHandle): PDeviceInfo;
+var
+  I: Integer;
+  P: PDeviceInfo;
+begin
+  Result := nil;
+  for I := 0 to FDeviceList.Count - 1 do
+  begin
+    P := FDeviceList[I];
+    if P^.Handle = AHandle then
+    begin
+      Result := P;
+      break;
+    end;
+  end;
+end;
+
+function TDCSMgr.GetDeviceByName(AName: String): PDeviceInfo;
+var
+  I: Integer;
+  P: PDeviceInfo;
+begin
+  Result := nil;
+  for I := 0 to FDeviceList.Count - 1 do
+  begin
+    P := FDeviceList[I];
+    if P^.Name = AName then
+    begin
+      Result := P;
+      break;
+    end;
+  end;
+end;
+
+function TDCSMgr.GetValidDeviceHandle(AHandle: TDeviceHandle; var DeviceInfo: PDeviceInfo): Integer;
+begin
+  Result := D_False;
+  DeviceInfo := nil;
+
+  if AHandle <= 0 then
+  begin
+    Result := E_INVALID_DEVICEHANDLE;
+    exit;
+  end;
+
+  DeviceInfo := GetDeviceByHandle(AHandle);
+  if DeviceInfo = nil then
+  begin
+    Result := E_NOT_OPENED_DEVICE;
+    exit;
+  end;
+
+  Result := D_OK;
+end;
+
+function TDCSMgr.SendCommand(AHost: String; APort: Integer; ACmd1, ACmd2: Byte; ADataBuf: String; ADataSize: Integer): Integer;
+var
+  Buffer: String;
+  CheckSum: Byte;
+  I: integer;
+begin
+  Result := D_FALSE;
+
+  Buffer := #2 + Chr($02 + ADataSize) + Chr(ACmd1) + Chr(ACmd2) + ADataBuf;
+
+  CheckSum := ACmd1 + ACmd2;
+  for I := 1 to ADataSize do
+    CheckSum := CheckSum + Ord(ADataBuf[I]);
+
+  CheckSum := 0 - CheckSum;
+  Buffer := Buffer + Chr(CheckSum);
+
+//  FUDPOut.Send(AHost, APort, Buffer);
+  FUDPOut.SendBuffer(AHost, APort, TIdBytes(Buffer));
+
+  Result := D_OK;
+end;
+
+function TDCSMgr.CheckSum(AValue: String): Boolean;
+var
+  I, Len: Integer;
+  CRC: Byte;
+begin
+  Result := False;
+
+  Len := Length(AValue);
+  CRC := 0;
+  for I := 3 to Len - 1 do
+    CRC := CRC + Ord(AValue[I]);
+  CRC := not (CRC) + 1;
+
+  Result := (CRC = Ord(AValue[Len]));
+end;
+
+function TDCSMgr.TransmitCommand(AHost: String; APort: Integer; ACmd1, ACmd2: Byte; ADataBuf: String; ADataSize: Integer): Integer;
+var
+  R: DWORD;
+begin
+  Result := S_FALSE;
+
+  ResetEvent(FSyncMsgEvent);
+  FReceivedBuffer := '';
+  FReceivedData := '';
+
+//  FCriticalSection.Enter;
+  try
+    if SendCommand(AHost, APort, ACmd1, ACmd2, ADataBuf, ADataSize) = NOERROR then
+    begin
+      R := WaitForSingleObject(FSyncMsgEvent, TIME_OUT);
+      case R of
+        WAIT_OBJECT_0:
+          begin
+            Result := FLastResult;
+          end;
+        else Result := E_TIMEOUT;
+       end;
+    end;
+  finally
+//    FCriticalSection.Leave;
+  end;
+end;
+
+function TDCSMgr.TransmitDevice(ACmd1, ACmd2: Byte; AHandle: TDeviceHandle; ADataBuf: String; ADataSize: Integer): Integer;
+var
+  P: PDeviceInfo;
+begin
+  Result := S_FALSE;
+
+  P := GetDeviceByHandle(AHandle);
+  if P = nil then exit;
+
+  Result := TransmitCommand(P^.Host, P^.Port, ACmd1, ACmd2, ADataBuf, ADataSize);
+end;
+
+function WriteLog(Log: String): Integer;
+var
+  FilePath, FileName: String;
+  FileStream: TFileStream;
+  S: String;
+  F: TextFile;
+begin
+  Result := -1;
+
+  FilePath := 'C:\01';
+  FileName := FilePath + '\' + '01.log';
+
+  // 디렉토리 있는지 확인 없으면 생성
+  if not DirectoryExists(FilePath) then ForceDirectories(FilePath);
+
+  S := FormatDateTime('[hh:nn:ss:zzz]', Now);
+  S := S + ' ' + Log;
+  try
+    AssignFile(F, FileName);
+    if FileExists(FileName) then Append(F)
+    else Rewrite(F);
+    Writeln(F, S);
+  finally
+    Closefile(F);
+  end;
+end;
+
+procedure TDCSMgr.UDPCallbackRead(AThread: TIdUDPListenerThread; AData: TIdBytes; ABinding: TIdSocketHandle);
+const
+  EventStatusNames: array[esNone..esDone] of String =
+    ('', 'Error', 'Skipped', 'Idle', 'Loading', 'Loaded', 'Cueing', 'Cued',
+     'StandByOff', 'StandByOn', 'Preroll', 'OnAir',
+     'Finish', 'Finishing', 'Finished', 'Done');
+var
+  RecvBuffer: String;
+  ByteCount: Integer;
+  Cmd1, Cmd2: Byte;
+  NameLen: Integer;
+  DeviceHandle: TDeviceHandle;
+  EventID: TEventID;
+  Status: TStatus;
+  EventStatus: TEventStatus;
+begin
+//  FCriticalSection.Enter;
+  try
+//  if UDPReadString(RecvBuffer, AData) <= 0 then exit;
+
+  RecvBuffer := BytesToString(AData);
+  if Length(RecvBuffer) <= 0 then exit;
+  FCallbackBuffer := FCallbackBuffer + RecvBuffer;
+
+  if Length(FCallbackBuffer) < 1 then exit;
+
+  case FCallbackBuffer[1] of
+    #2:
+      begin
+        if Length(FCallbackBuffer) < 2 then exit;
+        ByteCount := Ord(FCallbackBuffer[2]);
+        if Length(FCallbackBuffer) = ByteCount + 3 then
+        begin
+          if CheckSum(FCallbackBuffer) then
+          begin
+            Cmd1 := Ord(FCallbackBuffer[3]);
+            Cmd2 := Ord(FCallbackBuffer[4]);
+            FCallbackData := System.Copy(FCallbackBuffer, 5, ByteCount - 2);
+
+            case Cmd1 of
+              $00:
+                case Cmd2 of
+                  $01:
+                    begin
+                      Move(FCallbackData[1], EventID, SizeOf(TEventID));
+                      FCallbackData := Copy(FCallbackData, SizeOf(TEventID) + 1, Length(FCallbackData));
+
+                      DeviceHandle := PCharToInt(@FCallbackData[1]);
+                      FCallbackData := Copy(FCallbackData, 5, Length(FCallbackData));
+
+                      Move(FCallbackData[1], Status, SizeOf(TStatus));
+                      if Assigned(@DeviceStatusCallBackProc) then DeviceStatusCallBackProc(EventID, DeviceHandle, Status);
+                    end;
+                  $02:
+                    begin
+                      Move(FCallbackData[1], EventID, SizeOf(TEventID));
+                      EventStatus := TEventStatus(Ord(FCallbackData[SizeOf(TEventID) + 1]));
+//                      WriteLog(EventIDToString(EventID) + ' : ' + EventStatusNames[EventStatus]);
+                      if Assigned(@EventStatusCallBackProc) then EventStatusCallBackProc(EventID, EventStatus);
+//                      FEventCallbackThread.SetEventStatus(EventID, EventStatus);
+                    end;
+                end;
+            end;
+          end;
+          FCallbackBuffer := '';
+        end
+        else if (ByteCount <= 0) or (Length(FCallbackBuffer) > ByteCount + 3) then
+        begin
+          FCallbackBuffer := '';
+        end;
+      end;
+    else
+    begin
+      FCallbackBuffer := '';
+    end;
+  end;
+  finally
+//    FCriticalSection.Leave;
+  end;
+end;
+
+procedure TDCSMgr.UDPInRead(AThread: TIdUDPListenerThread; AData: TIdBytes; ABinding: TIdSocketHandle);
+var
+  RecvBuffer: String;
+  ByteCount: Integer;
+  Cmd1, Cmd2: Byte;
+  Device: TDeviceHandle;
+begin
+//  if UDPReadString(RecvBuffer, AData) <= 0 then exit;
+
+  RecvBuffer := String(AData);//;/BytesToString(AData);
+  if Length(RecvBuffer) <= 0 then exit;
+  FReceivedBuffer := FReceivedBuffer + RecvBuffer;
+
+  if Length(FReceivedBuffer) < 1 then exit;
+
+  case FReceivedBuffer[1] of
+    #2:
+      begin
+        if Length(FReceivedBuffer) < 2 then exit;
+        ByteCount := Ord(FReceivedBuffer[2]);
+        if Length(FReceivedBuffer) = ByteCount + 3 then
+        begin
+          if CheckSum(FReceivedBuffer) then
+          begin
+            Cmd1 := Ord(FReceivedBuffer[3]);
+            Cmd2 := Ord(FReceivedBuffer[4]);
+
+            FReceivedData := System.Copy(FReceivedBuffer, 5, ByteCount - 2);
+
+            FLastResult := D_OK;
+//            TransmitResponse(ABinding.PeerIP, GV_NetOutPort, Cmd1, Cmd2, SendBuffer, Length(SendBuffer));
+          end
+          else FLastResult := E_NAK_CHECKSUM;
+          SetEvent(FSyncMsgEvent);
+          FReceivedBuffer := '';
+        end
+        else if (ByteCount <= 0) or (Length(FReceivedBuffer) > ByteCount + 3) then
+        begin
+          FLastResult := D_FALSE;
+          SetEvent(FSyncMsgEvent);
+          FReceivedBuffer := '';
+        end;
+      end;
+    #4: // ACK
+      begin
+        FLastResult := D_OK;
+        SetEvent(FSyncMsgEvent);
+        FReceivedBuffer := '';
+      end;
+    else
+    begin
+      FLastResult := D_FALSE;
+      SetEvent(FSyncMsgEvent);
+      FReceivedBuffer := '';
+    end;
+  end;
+end;
+
+// 0X00 System Control
+function TDCSMgr.Open(AHost: PChar; ADeviceName: PChar; var AHandle: TDeviceHandle): Integer;
+var
+  Buffer: String;
+  P: PDeviceInfo;
+begin
+  Result := D_False;
+  AHandle := 0;
+
+  P := GetDeviceByName(ADeviceName);
+  if P = nil then
+  begin
+    P := New(PDeviceInfo);
+    FillChar(P^, SizeOf(TDeviceInfo), #0);
+
+    StrPCopy(P^.Name, ADeviceName);
+    StrPCopy(P^.Host, AHost);
+    P^.Port := FUDPOut.Port;
+    FDeviceList.Add(P);
+  end;
+
+  Buffer := ADeviceName;
+  Result := TransmitCommand(P^.Host, P^.Port, $00, $00, Buffer, Length(Buffer));
+  if Result = D_OK then
+  begin
+    AHandle := PCharToInt(@FReceivedData[1]);
+    P^.Handle := AHandle;
+//    ShowMessage(IntToStr(PCharToInt(@FReceivedData[1])));
+//    ShowMessage(IntToStr(P^.Handle));
+  end;
+end;
+
+function TDCSMgr.Close(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+  I: Integer;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(P^.Handle);
+  Result := TransmitCommand(P^.Host, P^.Port, $00, $01, Buffer, Length(Buffer));
+  if Result = D_OK then
+  begin
+    I := FDeviceList.IndexOf(P);
+    FDeviceList.Delete(I);
+    Dispose(P);
+  end;
+end;
+
+// Video server only
+// 0X10 Immediate Control
+function TDCSMgr.Stop(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $10, $00, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.Play(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $10, $01, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.Pause(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $10, $02, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.Continue(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $10, $03, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.FastFoward(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $10, $04, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.FastRewind(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $10, $05, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.Jog(AHandle: TDeviceHandle; AFrameOrSpeed: Double): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle) + DoubleToPChar(AFrameOrSpeed);
+  Result := TransmitCommand(P^.Host, P^.Port, $10, $06, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.Shuttle(AHandle: TDeviceHandle; ASpeed: Double): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle) + DoubleToPChar(ASpeed);
+  Result := TransmitCommand(P^.Host, P^.Port, $10, $07, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.StandBy(AHandle: TDeviceHandle; AOn: Boolean): Integer;
+var
+  P: PDeviceInfo;
+  Buffer, Data: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  case AOn of
+    True: Data := Chr($01);
+    else Data := Chr($00);
+  end;
+  Buffer := IntToPChar(AHandle) + Data;
+  Result := TransmitCommand(P^.Host, P^.Port, $10, $08, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.Eject(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $10, $09, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.Preroll(AHandle: TDeviceHandle): Integer; // VCR only
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $10, $10, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.Rec(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $10, $20, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.AutoEdit(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $10, $21, Buffer, Length(Buffer));
+end;
+
+// 0X20 Preset/Select Commands
+function TDCSMgr.SetPortMode(AHandle: TDeviceHandle; APortMode: TPortMode): Integer;
+var
+  P: PDeviceInfo;
+  Buffer, Data: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle) + Chr(Ord(APortMode));
+  Result := TransmitCommand(P^.Host, P^.Port, $20, $00, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.SetAutoStatus(AHandle: TDeviceHandle; AAutoStatus: Boolean): Integer;
+var
+  P: PDeviceInfo;
+  Buffer, Data: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle) + Chr(Ord(AAutoStatus));
+  Result := TransmitCommand(P^.Host, P^.Port, $20, $01, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.PlayCue(AHandle: TDeviceHandle; AID: String; ACueTC, ADuration: TTimecode): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle) + Chr(Length(AID)) + AID + IntToPChar(ACueTC) + IntToPChar(ADuration);
+  Result := TransmitCommand(P^.Host, P^.Port, $20, $10, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.RecordCue(AHandle: TDeviceHandle; AID: String; ADuration: TTimecode): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle) + Chr(Length(AID)) + AID + IntToPChar(ADuration);
+  Result := TransmitCommand(P^.Host, P^.Port, $20, $20, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.IDRename(AHandle: TDeviceHandle; ASourceID, ATargetID: String): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle) + Chr(Length(ASourceID)) + ASourceID + Chr(Length(ATargetID)) + ATargetID;
+  Result := TransmitCommand(P^.Host, P^.Port, $20, $30, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.IDDelete(AHandle: TDeviceHandle; AID: String): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle) + Chr(Length(AID)) + AID;
+  Result := TransmitCommand(P^.Host, P^.Port, $20, $31, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.InEntry(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $20, $40, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.OutEntry(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $20, $41, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.AInEntry(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $20, $42, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.AOutEntry(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $20, $43, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.InReset(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $20, $44, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.OutReset(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $20, $45, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.AInReset(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $20, $46, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.AOutReset(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $20, $47, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.EditPreset(AHandle: TDeviceHandle; AData1, AData2: Byte): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle) + Chr(AData1) + Chr(AData2);
+  Result := TransmitCommand(P^.Host, P^.Port, $20, $48, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.SetRoute(AHandle: TDeviceHandle; AOutput, AInput, ALevel: Integer): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle) + IntToPChar(AOutput) + IntToPChar(AInput) + IntToPChar(ALevel);
+  Result := TransmitCommand(P^.Host, P^.Port, $20, $50, Buffer, Length(Buffer));
+end;
+
+// 0X30 Sense Queries
+function TDCSMgr.GetStatus(AHandle: TDeviceHandle; var AStatus: TStatus): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $30, $00, Buffer, Length(Buffer));
+  if Result = D_OK then
+  begin
+    if Length(FReceivedData) > 0 then
+      Move(FReceivedData[1], AStatus, SizeOf(TStatus));
+  end
+  else
+    case AStatus.EventType of
+      ET_SWITCHER: FillChar(AStatus.Switcher, SizeOf(TSwitcherStatus), #0);
+      ET_PLAYER: FillChar(AStatus.Switcher, SizeOf(TPlayerStatus), #0);
+      ET_GPI: FillChar(AStatus.Switcher, SizeOf(TGPIStatus), #0);
+      ET_RSW: FillChar(AStatus.Switcher, SizeOf(TRSWStatus), #0);
+    end;
+end;
+
+function TDCSMgr.GetStorageTimeRemaining(AHandle: TDeviceHandle; var ATotal, AAvailable: TTimecode; Extended: Boolean = False): Integer;
+var
+  P: PDeviceInfo;
+  T: TTypeConvTime;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  if Extended then Buffer := Buffer + Chr($41)
+  else Buffer := Buffer + Chr($01);
+  
+  Result := TransmitCommand(P^.Host, P^.Port, $30, $01, Buffer, Length(Buffer));
+  if Result = D_OK then
+  begin
+    T.Frame   := Ord(FReceivedData[1]);
+    T.Second  := Ord(FReceivedData[2]);
+    T.Minute  := Ord(FReceivedData[3]);
+    T.Hour    := Ord(FReceivedData[4]);
+    ATotal    := T.vtDWord;
+
+    T.Frame   := Ord(FReceivedData[5]);
+    T.Second  := Ord(FReceivedData[6]);
+    T.Minute  := Ord(FReceivedData[7]);
+    T.Hour    := Ord(FReceivedData[8]);
+    AAvailable  := T.vtDWord;
+  end
+  else
+  begin
+    ATotal      := 0;
+    AAvailable  := 0;
+  end;
+end;
+
+function TDCSMgr.GetTC(AHandle: TDeviceHandle; var ACurTC: TTimecode): Integer;
+var
+  P: PDeviceInfo;
+  T: TTypeConvTime;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $30, $10, Buffer, Length(Buffer));
+  if Result = D_OK then
+  begin
+    T.Frame   := Ord(FReceivedData[1]);
+    T.Second  := Ord(FReceivedData[2]);
+    T.Minute  := Ord(FReceivedData[3]);
+    T.Hour    := Ord(FReceivedData[4]);
+    ACurTC    := T.vtDWord;
+  end
+  else
+  begin
+    ACurTC    := 0;
+  end;
+end;
+
+function TDCSMgr.GetRemainTC(AHandle: TDeviceHandle; var ARemainTC: TTimecode): Integer;
+var
+  P: PDeviceInfo;
+  T: TTypeConvTime;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $30, $11, Buffer, Length(Buffer));
+  if Result = D_OK then
+  begin
+    T.Frame   := Ord(FReceivedData[1]);
+    T.Second  := Ord(FReceivedData[2]);
+    T.Minute  := Ord(FReceivedData[3]);
+    T.Hour    := Ord(FReceivedData[4]);
+    ARemainTC := T.vtDWord;
+  end
+  else
+  begin
+    ARemainTC    := 0;
+  end;
+end;
+
+function TDCSMgr.GetList(AHandle: TDeviceHandle; var AIDList: TIDList; var ARemainIDCount: Integer): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+
+  IDs, ID: String;
+  I, IDLen: Integer;
+begin
+  Result := D_FALSE;
+  FillChar(AIDList, SizeOf(TIDList), #0);
+  ARemainIDCount := 0;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $30, $20, Buffer, Length(Buffer));
+  if Result = D_OK then
+  begin
+    Move(FReceivedData[1], AIDList, SizeOf(TIDList));
+    ARemainIDCount := PCharToInt(@FReceivedData[SizeOf(TIDList) + 1]);
+  end;
+end;
+
+function TDCSMgr.GetNext(AHandle: TDeviceHandle; var AIDList: TIDList; var ARemainIDCount: Integer): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+
+  IDs, ID: String;
+  I, IDLen: Integer;
+begin
+  Result := D_FALSE;
+  FillChar(AIDList, SizeOf(TIDList), #0);
+  ARemainIDCount := 0;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $30, $21, Buffer, Length(Buffer));
+  if Result = D_OK then
+  begin
+    Move(FReceivedData[1], AIDList, SizeOf(TIDList));
+    ARemainIDCount := PCharToInt(@FReceivedData[SizeOf(TIDList) + 1]);
+  end;
+end;
+
+function TDCSMgr.GetExist(AHandle: TDeviceHandle; AID: String; var AExist: Boolean): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle) + Chr(Length(AID)) + AID;
+  Result := TransmitCommand(P^.Host, P^.Port, $30, $22, Buffer, Length(Buffer));
+  if Result = D_OK then
+  begin
+    AExist := Ord(FReceivedData[1]) > $00;
+  end
+  else
+  begin
+    AExist := False;
+  end;
+end;
+
+function TDCSMgr.GetSize(AHandle: TDeviceHandle; AID: String; var ADuration: TTimecode): Integer;
+var
+  P: PDeviceInfo;
+  T: TTypeConvTime;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle) + Chr(Length(AID)) + AID;
+  Result := TransmitCommand(P^.Host, P^.Port, $30, $23, Buffer, Length(Buffer));
+  if Result = D_OK then
+  begin
+    T.Frame   := Ord(FReceivedData[1]);
+    T.Second  := Ord(FReceivedData[2]);
+    T.Minute  := Ord(FReceivedData[3]);
+    T.Hour    := Ord(FReceivedData[4]);
+    ADuration := T.vtDWord;
+  end
+  else
+  begin
+    ADuration := 0;
+  end;
+end;
+
+function TDCSMgr.GetRoute(AHandle: TDeviceHandle; AOutput: Integer; var AInput: Integer; ALevel: Integer): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle) + IntToPChar(AOutput) + IntToPChar(ALevel);
+  Result := TransmitCommand(P^.Host, P^.Port, $30, $50, Buffer, Length(Buffer));
+end;
+
+// 0X40 Event Control
+function TDCSMgr.InputEvent(AHandle: TDeviceHandle; var AEvent: TEvent): Integer;
+var
+  P: PDeviceInfo;
+  Buffer, Data: String; 
+  I: Integer;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  SetLength(Data, SizeOf(TEvent));
+  Move(AEvent, Data[1], SizeOf(TEvent));
+
+  Buffer := IntToPChar(AHandle) + Data;
+  Result := TransmitCommand(P^.Host, P^.Port, $40, $00, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.DeleteEvent(AHandle: TDeviceHandle; AEventID: TEventID): Integer;
+var
+  P: PDeviceInfo;
+  Buffer, Data: String;
+  I: Integer;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  SetLength(Data, SizeOf(TEventID));
+  Move(AEventID, Data[1], SizeOf(TEventID));
+
+  Buffer := IntToPChar(AHandle) + Data;
+  Result := TransmitCommand(P^.Host, P^.Port, $40, $01, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.ClearEvent(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+  I: Integer;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $40, $02, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.TakeEvent(AHandle: TDeviceHandle; AEventID: TEventID; ADelayTime: TTimecode): Integer;
+var
+  P: PDeviceInfo;
+  Buffer, Data: String;
+  I: Integer;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  SetLength(Data, SizeOf(TEventID));
+  Move(AEventID, Data[1], SizeOf(TEventID));
+
+  Buffer := IntToPChar(AHandle) + Data + IntToPChar(ADelayTime);
+  Result := TransmitCommand(P^.Host, P^.Port, $40, $10, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.OnAirCatchEvent(AHandle: TDeviceHandle): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $40, $11, Buffer, Length(Buffer));
+end;
+
+function TDCSMgr.GetOnAirEventID(AHandle: TDeviceHandle; var AIsOnAir: Boolean; var ACurrEventID, ANextEventID: TEventID): Integer;
+var
+  P: PDeviceInfo;
+  Buffer: String;
+  I: Integer;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  Buffer := IntToPChar(AHandle);
+  Result := TransmitCommand(P^.Host, P^.Port, $40, $20, Buffer, Length(Buffer));
+  if Result = D_OK then
+  begin
+    AIsOnAir := Ord(FReceivedData[1]) = $01;
+    Move(FReceivedData[2], ACurrEventID, SizeOf(TEventID));
+    Move(FReceivedData[SizeOf(TEventID) + 2], ANextEventID, SizeOf(TEventID));
+  end;
+end;
+
+function TDCSMgr.GetEventStatus(AHandle: TDeviceHandle; AEventID: TEventID; var AEventStatus: TEventStatus): Integer;
+var
+  P: PDeviceInfo;
+  Buffer, Data: String;
+  I: Integer;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  SetLength(Data, SizeOf(TEventID));
+  Move(AEventID, Data[1], SizeOf(TEventID));
+
+  Buffer := IntToPChar(AHandle) + Data;
+  Result := TransmitCommand(P^.Host, P^.Port, $40, $21, Buffer, Length(Buffer));
+  if Result = D_OK then
+  begin
+    Move(FReceivedData[1], AEventStatus, SizeOf(TEventStatus));
+  end;
+end;
+
+function TDCSMgr.GetEventStartTime(AHandle: TDeviceHandle; AEventID: TEventID; var AStartTime: TEventTime): Integer;
+var
+  P: PDeviceInfo;
+  Buffer, Data: String;
+  I: Integer;
+begin
+  Result := D_FALSE;
+
+  Result := GetValidDeviceHandle(AHandle, P);
+  if Result <> D_OK then exit;
+
+  SetLength(Data, SizeOf(TEventID));
+  Move(AEventID, Data[1], SizeOf(TEventID));
+
+  Buffer := IntToPChar(AHandle) + Data;
+  Result := TransmitCommand(P^.Host, P^.Port, $40, $22, Buffer, Length(Buffer));
+  if Result = D_OK then
+  begin
+    AStartTime.T := PCharToInt(@FReceivedData[1]);
+    AStartTime.D := PCharToInt(@FReceivedData[5]);
+  end;
+end;
+
+{ TDCSEventCallbackThread }
+
+constructor TDCSEventCallbackThread.Create(ADCSMgr: TDCSMgr);
+begin
+  FDCSMgr := ADCSMgr;
+
+  FreeOnTerminate := False;
+  inherited Create(True);
+end;
+
+destructor TDCSEventCallbackThread.Destroy;
+begin
+  FDCSMgr := nil;
+
+  inherited Destroy;
+end;
+
+procedure TDCSEventCallbackThread.SetEventStatus(AEventID: TEventID; AEventStatus: TEventStatus);
+begin
+  FEventID := AEventID;
+  FEventStatus := AEventStatus;
+  SetEvent(FExecuteEvent);
+end;
+
+procedure TDCSEventCallbackThread.DoControl;
+begin
+  if Assigned(@EventStatusCallBackProc) then EventStatusCallBackProc(FEventID, FEventStatus);
+//  ResetEvent(FExecuteEvent);
+end;
+
+procedure TDCSEventCallbackThread.Execute;
+var
+  R: Integer;
+begin
+  FExecuteEvent := CreateEvent(nil, True, False, nil);
+
+  while not Terminated do
+  begin
+        R := WaitForSingleObject(FExecuteEvent, INFINITE);
+        if R = WAIT_OBJECT_0 then
+        (DoControl);
+  end;
+  CloseHandle(FExecuteEvent);
+end;
+
+end.

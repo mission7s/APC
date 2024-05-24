@@ -1,0 +1,68 @@
+- Video Decoder & Encoder
+	- Open
+	- Close
+	
+	- Stop
+	- Play
+	- Pause
+	- FastFoward
+	- FastRewind
+	- SetTC
+
+	- PlayCue
+	- PlayCueWithData
+	- RecordCue
+	- RecordCueData
+
+	- GetStatus
+	- GetTC
+
+
+- CG
+	- Open
+	- Close
+
+	- Stop
+	- Play
+	- Pause
+	- SetTC - if Sequence
+
+	- PlayCue
+	- PlayCueWithData
+
+- Logo
+	- Open
+	- Close
+
+	- On
+	- Off
+
+	- Cue
+
+- Closed Caption & Sub Title
+	- Open
+	- Close
+
+	- On
+	- Off
+
+	- Stop
+	- Play
+	- Pause
+
+	- PlayCue
+	- PlayCueWithData
+
+- Scroll Title
+	- Open
+	- Close
+
+	- On
+	- Off
+
+	- Stop
+	- Play
+	- Pause
+
+	- PlayCue
+
